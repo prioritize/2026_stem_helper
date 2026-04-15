@@ -245,6 +245,35 @@ input.hdg-input:focus { outline: none; }
 }
 .rm-btn:hover { color: #f38ba8; }
 
+.action-btn {
+  background: none;
+  border: none;
+  color: #585b70;
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 0.86rem;
+  line-height: 1;
+}
+.action-btn:hover { color: #f9e2af; }
+.action-btn.has-action { color: #f9e2af; }
+
+.action-row td {
+  background: #1a1a27;
+  font-size: 0.76rem;
+  color: #f9e2af;
+  font-style: italic;
+  padding: 2px 6px 3px 24px;
+  border-bottom: 1px solid #1e1e2e;
+  cursor: pointer;
+  white-space: pre-wrap;
+  line-height: 1.4;
+}
+.action-row:hover td { background: #22222f; }
+.action-row td::before {
+  content: '\25b8 ';
+  color: #585b70;
+}
+
 .rev-btn {
   background: none;
   border: 1px solid #45475a;
@@ -407,6 +436,7 @@ canvas.mode-origin   { cursor: cell; }
   <div class="sep"></div>
   <button id="btn-save">&#8681; Save</button>
   <button id="btn-load">&#8679; Load</button>
+  <button id="btn-print">&#128424; Print Instructions</button>
   <input type="file" id="load-file-input" accept=".json" style="display:none">
 </div>
 
@@ -790,6 +820,26 @@ function createChallenge() {
   });
   currentChallengeIdx = newIdx;
   input.value = '';
+}
+
+// ── Action notes ──────────────────────────────────────────────────────────────
+function editAction(wi) {
+  const wp = waypoints[wi];
+  if (!wp) return;
+  const cur = wp.action || '';
+  const input = prompt(
+    'Actions at waypoint ' + (wi + 1) +
+    ' (one per line, e.g. "open claw", "lift boom"). Leave blank to clear.',
+    cur
+  );
+  if (input === null) return;
+  const cleaned = input
+    .split(/\r?\n/)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .join('\n');
+  wp.action = cleaned || undefined;
+  render();
 }
 
 // ── Route calculation ─────────────────────────────────────────────────────────
@@ -1341,13 +1391,27 @@ function updateSidebar(rows) {
         if (isLinked) {
           tr.title = 'Linked to landmark "' + row.wp.landmarkName + '" \u2014 double-click to edit goal heading';
         }
+        const actionText = (waypoints[row.wi].action || '').trim();
+        const actionBtnCls = actionText ? 'action-btn has-action' : 'action-btn';
         tr.innerHTML =
           '<td>' + numCell + '</td>' +
           '<td>' + hdgCell + '</td>' +
           '<td>' + distStr + '</td>' +
           '<td class="' + turnClass + '">' + turnStr + '</td>' +
           '<td>' + revCell + '</td>' +
-          '<td><button class="rm-btn"  data-wi="' + row.wi + '">\u2715</button></td>';
+          '<td style="white-space:nowrap">' +
+            '<button class="' + actionBtnCls + '" data-wi="' + row.wi + '" title="Edit actions (open claw, etc.)">\u270e</button>' +
+            '<button class="rm-btn" data-wi="' + row.wi + '">\u2715</button>' +
+          '</td>';
+        tbody.appendChild(tr);
+        if (actionText) {
+          const actTr = document.createElement('tr');
+          actTr.className = 'action-row';
+          actTr.dataset.wi = row.wi;
+          actTr.title = 'Click to edit actions for waypoint ' + (row.wi + 1);
+          actTr.innerHTML = '<td colspan="6">' + escapeHtml(actionText) + '</td>';
+          tbody.appendChild(actTr);
+        }
         if (isLinked) {
           tr.addEventListener('dblclick', e => {
             if (e.target.closest('button')) return;
@@ -1368,7 +1432,6 @@ function updateSidebar(rows) {
             render();
           });
         }
-        tbody.appendChild(tr);
       }
     }
   }
@@ -1430,6 +1493,18 @@ function updateSidebar(rows) {
       const wi = parseInt(btn.dataset.wi);
       waypoints[wi].reverse = !waypoints[wi].reverse;
       render();
+    });
+  });
+  tbody.querySelectorAll('.action-btn').forEach(btn => {
+    btn.addEventListener('click', e => {
+      e.stopPropagation();
+      editAction(parseInt(btn.dataset.wi));
+    });
+  });
+  tbody.querySelectorAll('.action-row').forEach(tr => {
+    tr.addEventListener('click', e => {
+      e.stopPropagation();
+      editAction(parseInt(tr.dataset.wi));
     });
   });
   tbody.querySelectorAll('.rm-btn').forEach(btn => {
@@ -1817,6 +1892,7 @@ function savePath() {
         challengeIdx: wp.challengeIdx ?? 0,
         landmarkName: wp.landmarkName || null,
         goalHdg:      wp.goalHdg ?? null,
+        action:       wp.action || null,
       };
     }),
     challenges: challenges.map(ch => ({
@@ -1880,6 +1956,7 @@ function loadPath(file) {
       challengeIdx: wp.challengeIdx ?? wp.objectiveIdx ?? 0,
       landmarkName: wp.landmarkName || null,
       goalHdg:      wp.goalHdg ?? null,
+      action:       wp.action || undefined,
     }));
 
     startPose = state.startPose
@@ -1919,6 +1996,135 @@ function loadPath(file) {
   };
   reader.readAsText(file);
 }
+
+// ── Printable student instructions ────────────────────────────────────────────
+function generateInstructions() {
+  const { rows } = buildRoute();
+
+  // Group rows by challenge index, preserving challenge order
+  const groups = new Map();
+  for (const row of rows) {
+    const ci = row.wp.challengeIdx ?? 0;
+    if (!groups.has(ci)) groups.set(ci, []);
+    groups.get(ci).push(row);
+  }
+
+  const css = `
+    body { font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+           color: #1e1e2e; background: #fff; max-width: 780px;
+           margin: 24px auto; padding: 0 24px; line-height: 1.45; }
+    h1 { font-size: 1.6rem; margin: 0 0 4px; }
+    .meta { color: #666; font-size: 0.85rem; margin-bottom: 20px; }
+    h2 { font-size: 1.15rem; margin: 20px 0 6px; }
+    h2 small { font-weight: normal; color: #666; font-size: 0.8rem; }
+    .desc { font-size: 0.82rem; color: #555; font-style: italic;
+            margin: 0 0 8px; padding-left: 14px; border-left: 2px solid #ddd; }
+    section.challenge { page-break-inside: avoid; margin-bottom: 14px; }
+    ol { margin: 6px 0 12px 22px; padding: 0; }
+    li { margin: 3px 0; font-size: 0.95rem; }
+    li b { color: #1e1e2e; }
+    .start-box { background: #f5f5f7; border: 1px solid #e0e0e4;
+                 border-radius: 6px; padding: 10px 14px; margin-bottom: 18px; }
+    .warn { color: #b34; }
+    @media print {
+      body { margin: 0; padding: 12mm; max-width: none; }
+      button.print-btn { display: none; }
+    }
+    button.print-btn { position: fixed; top: 12px; right: 12px;
+                       padding: 6px 14px; font-size: 0.9rem; cursor: pointer;
+                       background: #4a7; color: #fff; border: none;
+                       border-radius: 4px; }
+  `;
+
+  let body = '';
+  body += '<button class="print-btn" onclick="window.print()">Print</button>';
+  body += '<h1>VEX IQ Mission Instructions</h1>';
+  body += '<div class="meta">Units: ' + units +
+          ' &middot; Field width: ' + fieldWidthReal + ' ' + units +
+          ' &middot; Generated ' + new Date().toLocaleString() + '</div>';
+
+  // Start pose
+  body += '<div class="start-box"><b>Starting Position:</b> ';
+  if (startPose) {
+    let loc = '';
+    if (origin) {
+      const rx = pxToReal(startPose.x - origin.x);
+      const ry = pxToReal(-(startPose.y - origin.y));
+      loc = 'at (' + rx.toFixed(1) + ', ' + ry.toFixed(1) + ') ' + units + ', ';
+    }
+    body += 'Place the robot ' + loc +
+            'facing heading <b>0&deg;</b> (reset the gyro at this position).';
+  } else {
+    body += '<span class="warn">No start pose set.</span>';
+  }
+  body += '</div>';
+
+  // Per-challenge steps
+  for (let ci = 0; ci < challenges.length; ci++) {
+    const chRows = groups.get(ci) || [];
+    if (chRows.length === 0) continue;
+    const ch = challenges[ci] || {};
+    const color = ch.color || challengeColor(ci);
+
+    body += '<section class="challenge">';
+    body += '<h2 style="border-left:6px solid ' + color + ';padding-left:10px">' +
+            escapeHtml(ch.name || ('Challenge ' + (ci + 1)));
+    if (ch.points != null) {
+      const pts = ch.points;
+      body += ' <small>(' + (pts > 0 ? '+' : '') + pts + ' pts)</small>';
+    }
+    body += '</h2>';
+    if (ch.description) {
+      body += '<p class="desc">' + escapeHtml(ch.description) + '</p>';
+    }
+
+    body += '<ol>';
+    let step = 0;
+    for (const row of chRows) {
+      if (row.heading !== null && row.approachFacing !== null) {
+        step++;
+        const turnTo = relHdg(row.approachFacing);
+        const dir    = row.wp.reverse ? 'backward' : 'forward';
+        const dist   = fmtDist(row.distReal);
+        if (row.wp.landmarkName) {
+          body += '<li>Turn to heading <b>' + turnTo + '&deg;</b>, then drive ' +
+                  dir + ' <b>' + dist + '</b> to landmark <b>' +
+                  escapeHtml(row.wp.landmarkName) + '</b>.</li>';
+        } else {
+          body += '<li>Turn to heading <b>' + turnTo + '&deg;</b>, then drive ' +
+                  dir + ' <b>' + dist + '</b>.</li>';
+        }
+      }
+      if (row.wp.goalHdg != null) {
+        step++;
+        const goalRel = relHdg(row.wp.goalHdg);
+        body += '<li>At landmark <b>' + escapeHtml(row.wp.landmarkName || '') +
+                '</b>: turn to heading <b>' + goalRel + '&deg;</b>.</li>';
+      }
+      if (row.wp.action) {
+        const actionLines = row.wp.action.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        for (const line of actionLines) {
+          step++;
+          body += '<li><b>Action:</b> ' + escapeHtml(line) + '</li>';
+        }
+      }
+    }
+    if (step === 0) body += '<li><i>No movement steps for this challenge.</i></li>';
+    body += '</ol></section>';
+  }
+
+  const html = '<!doctype html><html><head><meta charset="utf-8">' +
+               '<title>VEX IQ Mission Instructions</title>' +
+               '<style>' + css + '</style></head><body>' + body + '</body></html>';
+
+  const w = window.open('', '_blank');
+  if (!w) { alert('Popup blocked — allow popups for this page to print instructions.'); return; }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
+}
+
+document.getElementById('btn-print').addEventListener('click', generateInstructions);
 
 document.getElementById('btn-save').addEventListener('click', savePath);
 document.getElementById('btn-load').addEventListener('click', () => document.getElementById('load-file-input').click());
