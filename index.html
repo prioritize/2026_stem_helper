@@ -262,17 +262,48 @@ input.hdg-input:focus { outline: none; }
   font-size: 0.76rem;
   color: #f9e2af;
   font-style: italic;
-  padding: 2px 6px 3px 24px;
+  padding: 2px 6px 3px 20px;
   border-bottom: 1px solid #1e1e2e;
-  cursor: pointer;
-  white-space: pre-wrap;
   line-height: 1.4;
 }
 .action-row:hover td { background: #22222f; }
-.action-row td::before {
-  content: '\25b8 ';
-  color: #585b70;
+.action-row-inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
+.action-row-inner::before {
+  content: '\25b8';
+  color: #585b70;
+  margin-right: 2px;
+}
+.action-text {
+  flex: 1;
+  cursor: text;
+  padding: 1px 4px;
+  border-radius: 3px;
+  border: 1px dashed transparent;
+  word-break: break-word;
+}
+.action-text:hover {
+  border-color: #45475a;
+  background: #1e1e2e;
+}
+.action-edit-btn,
+.action-rm-btn,
+.action-add-below-btn {
+  background: none;
+  border: none;
+  color: #585b70;
+  cursor: pointer;
+  padding: 0 3px;
+  font-size: 0.86rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.action-edit-btn:hover,
+.action-add-below-btn:hover { color: #f9e2af; }
+.action-rm-btn:hover { color: #f38ba8; }
 
 .rev-btn {
   background: none;
@@ -823,22 +854,46 @@ function createChallenge() {
 }
 
 // ── Action notes ──────────────────────────────────────────────────────────────
-function editAction(wi) {
+function ensureActionsArray(wp) {
+  if (!Array.isArray(wp.actions)) {
+    if (typeof wp.action === 'string' && wp.action.trim()) {
+      wp.actions = wp.action.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    } else {
+      wp.actions = [];
+    }
+    delete wp.action;
+  }
+  return wp.actions;
+}
+
+function addAction(wi, insertAt) {
   const wp = waypoints[wi];
   if (!wp) return;
-  const cur = wp.action || '';
-  const input = prompt(
-    'Actions at waypoint ' + (wi + 1) +
-    ' (one per line, e.g. "open claw", "lift boom"). Leave blank to clear.',
-    cur
-  );
+  const acts = ensureActionsArray(wp);
+  const input = prompt('New action (e.g. "open claw", "lift boom"):', '');
   if (input === null) return;
-  const cleaned = input
-    .split(/\r?\n/)
-    .map(s => s.trim())
-    .filter(Boolean)
-    .join('\n');
-  wp.action = cleaned || undefined;
+  const text = input.trim();
+  if (!text) return;
+  const idx = (insertAt == null || insertAt < 0 || insertAt > acts.length) ? acts.length : insertAt;
+  acts.splice(idx, 0, text);
+  render();
+}
+
+function editActionAt(wi, ai) {
+  const wp = waypoints[wi];
+  if (!wp || !Array.isArray(wp.actions) || ai < 0 || ai >= wp.actions.length) return;
+  const input = prompt('Edit action (leave blank to delete):', wp.actions[ai]);
+  if (input === null) return;
+  const text = input.trim();
+  if (!text) wp.actions.splice(ai, 1);
+  else       wp.actions[ai] = text;
+  render();
+}
+
+function removeActionAt(wi, ai) {
+  const wp = waypoints[wi];
+  if (!wp || !Array.isArray(wp.actions)) return;
+  wp.actions.splice(ai, 1);
   render();
 }
 
@@ -1391,8 +1446,9 @@ function updateSidebar(rows) {
         if (isLinked) {
           tr.title = 'Linked to landmark "' + row.wp.landmarkName + '" \u2014 double-click to edit goal heading';
         }
-        const actionText = (waypoints[row.wi].action || '').trim();
-        const actionBtnCls = actionText ? 'action-btn has-action' : 'action-btn';
+        const wpActions = ensureActionsArray(waypoints[row.wi]);
+        const hasActions = wpActions.length > 0;
+        const actionBtnCls = hasActions ? 'action-btn has-action' : 'action-btn';
         tr.innerHTML =
           '<td>' + numCell + '</td>' +
           '<td>' + hdgCell + '</td>' +
@@ -1400,16 +1456,24 @@ function updateSidebar(rows) {
           '<td class="' + turnClass + '">' + turnStr + '</td>' +
           '<td>' + revCell + '</td>' +
           '<td style="white-space:nowrap">' +
-            '<button class="' + actionBtnCls + '" data-wi="' + row.wi + '" title="Edit actions (open claw, etc.)">\u270e</button>' +
+            '<button class="' + actionBtnCls + '" data-wi="' + row.wi + '" title="Add action (open claw, etc.)">&#43;</button>' +
             '<button class="rm-btn" data-wi="' + row.wi + '">\u2715</button>' +
           '</td>';
         tbody.appendChild(tr);
-        if (actionText) {
+        for (let ai = 0; ai < wpActions.length; ai++) {
           const actTr = document.createElement('tr');
           actTr.className = 'action-row';
           actTr.dataset.wi = row.wi;
-          actTr.title = 'Click to edit actions for waypoint ' + (row.wi + 1);
-          actTr.innerHTML = '<td colspan="6">' + escapeHtml(actionText) + '</td>';
+          actTr.dataset.ai = ai;
+          actTr.innerHTML =
+            '<td colspan="6">' +
+              '<div class="action-row-inner">' +
+                '<span class="action-text" title="Click to edit">' + escapeHtml(wpActions[ai]) + '</span>' +
+                '<button class="action-edit-btn" title="Edit">\u270e</button>' +
+                '<button class="action-rm-btn" title="Delete">\u2715</button>' +
+                '<button class="action-add-below-btn" title="Add action below">&#43;</button>' +
+              '</div>' +
+            '</td>';
           tbody.appendChild(actTr);
         }
         if (isLinked) {
@@ -1498,13 +1562,28 @@ function updateSidebar(rows) {
   tbody.querySelectorAll('.action-btn').forEach(btn => {
     btn.addEventListener('click', e => {
       e.stopPropagation();
-      editAction(parseInt(btn.dataset.wi));
+      addAction(parseInt(btn.dataset.wi));
     });
   });
   tbody.querySelectorAll('.action-row').forEach(tr => {
-    tr.addEventListener('click', e => {
+    const wi = parseInt(tr.dataset.wi);
+    const ai = parseInt(tr.dataset.ai);
+    tr.addEventListener('click', e => e.stopPropagation());
+    tr.querySelector('.action-text').addEventListener('click', e => {
       e.stopPropagation();
-      editAction(parseInt(tr.dataset.wi));
+      editActionAt(wi, ai);
+    });
+    tr.querySelector('.action-edit-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      editActionAt(wi, ai);
+    });
+    tr.querySelector('.action-rm-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      removeActionAt(wi, ai);
+    });
+    tr.querySelector('.action-add-below-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      addAction(wi, ai + 1);
     });
   });
   tbody.querySelectorAll('.rm-btn').forEach(btn => {
@@ -1885,14 +1964,15 @@ function savePath() {
   const state = {
     version:    2,
     waypoints:  waypoints.map(wp => {
-      const pos = resolveWpPos(wp);
+      const pos  = resolveWpPos(wp);
+      const acts = Array.isArray(wp.actions) ? wp.actions.slice() : [];
       return {
         x: pos.x / CANVAS_W, y: pos.y / CANVAS_H,
         reverse: wp.reverse || false,
         challengeIdx: wp.challengeIdx ?? 0,
         landmarkName: wp.landmarkName || null,
         goalHdg:      wp.goalHdg ?? null,
-        action:       wp.action || null,
+        actions:      acts,
       };
     }),
     challenges: challenges.map(ch => ({
@@ -1956,7 +2036,11 @@ function loadPath(file) {
       challengeIdx: wp.challengeIdx ?? wp.objectiveIdx ?? 0,
       landmarkName: wp.landmarkName || null,
       goalHdg:      wp.goalHdg ?? null,
-      action:       wp.action || undefined,
+      actions:      Array.isArray(wp.actions)
+        ? wp.actions.slice()
+        : (typeof wp.action === 'string' && wp.action.trim()
+            ? wp.action.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+            : []),
     }));
 
     startPose = state.startPose
@@ -2101,12 +2185,12 @@ function generateInstructions() {
         body += '<li>At landmark <b>' + escapeHtml(row.wp.landmarkName || '') +
                 '</b>: turn to heading <b>' + goalRel + '&deg;</b>.</li>';
       }
-      if (row.wp.action) {
-        const actionLines = row.wp.action.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-        for (const line of actionLines) {
-          step++;
-          body += '<li><b>Action:</b> ' + escapeHtml(line) + '</li>';
-        }
+      const acts = Array.isArray(row.wp.actions) ? row.wp.actions : [];
+      for (const line of acts) {
+        const trimmed = String(line).trim();
+        if (!trimmed) continue;
+        step++;
+        body += '<li><b>Action:</b> ' + escapeHtml(trimmed) + '</li>';
       }
     }
     if (step === 0) body += '<li><i>No movement steps for this challenge.</i></li>';
