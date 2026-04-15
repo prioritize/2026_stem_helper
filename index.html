@@ -212,6 +212,17 @@ th {
 td { padding: 3px 4px; border-bottom: 1px solid #1e1e2e; }
 tr:hover td { background: #252535; }
 
+input.hdg-input {
+  width: 46px;
+  padding: 1px 3px;
+  font-size: 0.80rem;
+  background: #1e1e2e;
+  border: 1px solid #313244;
+  color: #cdd6f4;
+  border-radius: 3px;
+}
+input.hdg-input:focus { outline: 1px solid #cba6f7; }
+
 .turn-r    { color: #fab387; }
 .turn-l    { color: #a6e3a1; }
 .turn-none { color: #45475a; }
@@ -1279,7 +1290,16 @@ function updateSidebar(rows) {
 
     if (!collapsed) {
       for (const row of chRows) {
-        const hdgStr  = row.heading  !== null ? relHdg(row.heading) + '\u00b0' : '\u2014';
+        let hdgCell;
+        if (row.heading === null) {
+          hdgCell = '\u2014';
+        } else if (row.wp.landmarkName) {
+          // Linked waypoint — heading is locked by landmark geometry
+          hdgCell = relHdg(row.heading) + '\u00b0';
+        } else {
+          hdgCell = '<input type="number" class="hdg-input" data-wi="' + row.wi +
+                    '" value="' + relHdg(row.heading) + '" step="1" title="Type a heading to rotate this waypoint around its predecessor (distance preserved)">';
+        }
         const distStr = row.distReal !== null ? fmtDist(row.distReal)          : '\u2014';
 
         let turnStr = '\u2014', turnClass = 'turn-none';
@@ -1315,7 +1335,7 @@ function updateSidebar(rows) {
         }
         tr.innerHTML =
           '<td>' + numCell + '</td>' +
-          '<td>' + hdgStr  + '</td>' +
+          '<td>' + hdgCell + '</td>' +
           '<td>' + distStr + '</td>' +
           '<td class="' + turnClass + '">' + turnStr + '</td>' +
           '<td>' + revCell + '</td>' +
@@ -1348,6 +1368,29 @@ function updateSidebar(rows) {
   document.getElementById('total-row').textContent =
     total > 0 ? 'Total: ' + fmtDist(total) : 'Total: \u2014';
 
+  tbody.querySelectorAll('.hdg-input').forEach(inp => {
+    // Stop row/challenge-header click handlers from intercepting focus
+    inp.addEventListener('click',    e => e.stopPropagation());
+    inp.addEventListener('dblclick', e => e.stopPropagation());
+    inp.addEventListener('change', () => {
+      const wi     = parseInt(inp.dataset.wi);
+      const newRel = parseFloat(inp.value);
+      if (!isFinite(newRel)) { render(); return; }
+      const newAbs = (((newRel + startHdg()) % 360) + 360) % 360;
+      const prev   = wi === 0
+        ? (startPose || null)
+        : resolveWpPos(waypoints[wi - 1]);
+      if (!prev) { render(); return; }
+      const wp     = waypoints[wi];
+      const cur    = resolveWpPos(wp);
+      const distPx = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+      if (distPx < 1e-6) { render(); return; }
+      const rad    = newAbs * Math.PI / 180;
+      wp.x = prev.x + distPx * Math.sin(rad);
+      wp.y = prev.y - distPx * Math.cos(rad);
+      render();
+    });
+  });
   tbody.querySelectorAll('.rev-btn').forEach(btn => {
     btn.addEventListener('click', () => {
       const wi = parseInt(btn.dataset.wi);
