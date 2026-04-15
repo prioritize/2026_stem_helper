@@ -212,16 +212,23 @@ th {
 td { padding: 3px 4px; border-bottom: 1px solid #1e1e2e; }
 tr:hover td { background: #252535; }
 
+.hdg-value {
+  cursor: text;
+  padding: 1px 3px;
+  border-radius: 3px;
+  border: 1px dashed transparent;
+}
+.hdg-value:hover { border-color: #45475a; background: #1e1e2e; }
 input.hdg-input {
   width: 46px;
   padding: 1px 3px;
   font-size: 0.80rem;
   background: #1e1e2e;
-  border: 1px solid #313244;
+  border: 1px solid #cba6f7;
   color: #cdd6f4;
   border-radius: 3px;
 }
-input.hdg-input:focus { outline: 1px solid #cba6f7; }
+input.hdg-input:focus { outline: none; }
 
 .turn-r    { color: #fab387; }
 .turn-l    { color: #a6e3a1; }
@@ -1297,8 +1304,9 @@ function updateSidebar(rows) {
           // Linked waypoint — heading is locked by landmark geometry
           hdgCell = relHdg(row.heading) + '\u00b0';
         } else {
-          hdgCell = '<input type="number" class="hdg-input" data-wi="' + row.wi +
-                    '" value="' + relHdg(row.heading) + '" step="1" title="Type a heading to rotate this waypoint around its predecessor (distance preserved)">';
+          hdgCell = '<span class="hdg-value" data-wi="' + row.wi +
+                    '" title="Click to edit heading (rotates this waypoint around its predecessor, distance preserved)">' +
+                    relHdg(row.heading) + '\u00b0</span>';
         }
         const distStr = row.distReal !== null ? fmtDist(row.distReal)          : '\u2014';
 
@@ -1368,27 +1376,53 @@ function updateSidebar(rows) {
   document.getElementById('total-row').textContent =
     total > 0 ? 'Total: ' + fmtDist(total) : 'Total: \u2014';
 
-  tbody.querySelectorAll('.hdg-input').forEach(inp => {
-    // Stop row/challenge-header click handlers from intercepting focus
-    inp.addEventListener('click',    e => e.stopPropagation());
-    inp.addEventListener('dblclick', e => e.stopPropagation());
-    inp.addEventListener('change', () => {
-      const wi     = parseInt(inp.dataset.wi);
-      const newRel = parseFloat(inp.value);
-      if (!isFinite(newRel)) { render(); return; }
-      const newAbs = (((newRel + startHdg()) % 360) + 360) % 360;
-      const prev   = wi === 0
-        ? (startPose || null)
-        : resolveWpPos(waypoints[wi - 1]);
-      if (!prev) { render(); return; }
-      const wp     = waypoints[wi];
-      const cur    = resolveWpPos(wp);
-      const distPx = Math.hypot(cur.x - prev.x, cur.y - prev.y);
-      if (distPx < 1e-6) { render(); return; }
-      const rad    = newAbs * Math.PI / 180;
-      wp.x = prev.x + distPx * Math.sin(rad);
-      wp.y = prev.y - distPx * Math.cos(rad);
-      render();
+  tbody.querySelectorAll('.hdg-value').forEach(span => {
+    span.addEventListener('click', e => {
+      e.stopPropagation();
+      const wi     = parseInt(span.dataset.wi);
+      const curDeg = parseInt(span.textContent, 10);
+      const inp    = document.createElement('input');
+      inp.type       = 'number';
+      inp.className  = 'hdg-input';
+      inp.value      = isFinite(curDeg) ? curDeg : 0;
+      inp.step       = '1';
+      span.replaceWith(inp);
+      inp.focus();
+      inp.select();
+
+      let committed = false;
+      const commit = () => {
+        if (committed) return;
+        committed = true;
+        const newRel = parseFloat(inp.value);
+        if (!isFinite(newRel)) { render(); return; }
+        const newAbs = (((newRel + startHdg()) % 360) + 360) % 360;
+        const prev   = wi === 0
+          ? (startPose || null)
+          : resolveWpPos(waypoints[wi - 1]);
+        if (!prev) { render(); return; }
+        const wp     = waypoints[wi];
+        const cur    = resolveWpPos(wp);
+        const distPx = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+        if (distPx < 1e-6) { render(); return; }
+        const rad = newAbs * Math.PI / 180;
+        wp.x = prev.x + distPx * Math.sin(rad);
+        wp.y = prev.y - distPx * Math.cos(rad);
+        render();
+      };
+      const cancel = () => {
+        if (committed) return;
+        committed = true;
+        render();
+      };
+
+      inp.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter')       { ev.preventDefault(); commit(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+      });
+      inp.addEventListener('blur',    commit);
+      inp.addEventListener('click',    ev => ev.stopPropagation());
+      inp.addEventListener('dblclick', ev => ev.stopPropagation());
     });
   });
   tbody.querySelectorAll('.rev-btn').forEach(btn => {
