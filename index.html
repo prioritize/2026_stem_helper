@@ -212,15 +212,14 @@ th {
 td { padding: 3px 4px; border-bottom: 1px solid #1e1e2e; }
 tr:hover td { background: #252535; }
 
-.hdg-value {
+.hdg-value, .dist-value {
   cursor: text;
   padding: 1px 3px;
   border-radius: 3px;
   border: 1px dashed transparent;
 }
-.hdg-value:hover { border-color: #45475a; background: #1e1e2e; }
-input.hdg-input {
-  width: 46px;
+.hdg-value:hover, .dist-value:hover { border-color: #45475a; background: #1e1e2e; }
+input.hdg-input, input.dist-input {
   padding: 1px 3px;
   font-size: 0.80rem;
   background: #1e1e2e;
@@ -228,7 +227,9 @@ input.hdg-input {
   color: #cdd6f4;
   border-radius: 3px;
 }
-input.hdg-input:focus { outline: none; }
+input.hdg-input  { width: 46px; }
+input.dist-input { width: 56px; }
+input.hdg-input:focus, input.dist-input:focus { outline: none; }
 
 .turn-r    { color: #fab387; }
 .turn-l    { color: #a6e3a1; }
@@ -1413,7 +1414,16 @@ function updateSidebar(rows) {
                     '" title="Click to edit heading (rotates this waypoint around its predecessor, distance preserved)">' +
                     relHdg(row.heading) + '\u00b0</span>';
         }
-        const distStr = row.distReal !== null ? fmtDist(row.distReal)          : '\u2014';
+        let distCell;
+        if (row.distReal === null) {
+          distCell = '\u2014';
+        } else if (row.wp.landmarkName) {
+          distCell = fmtDist(row.distReal);
+        } else {
+          distCell = '<span class="dist-value" data-wi="' + row.wi +
+                     '" title="Click to edit distance (moves this waypoint along current heading, heading preserved)">' +
+                     fmtDist(row.distReal) + '</span>';
+        }
 
         let turnStr = '\u2014', turnClass = 'turn-none';
         if (row.turn !== null && Math.abs(row.turn) >= 1) {
@@ -1452,7 +1462,7 @@ function updateSidebar(rows) {
         tr.innerHTML =
           '<td>' + numCell + '</td>' +
           '<td>' + hdgCell + '</td>' +
-          '<td>' + distStr + '</td>' +
+          '<td>' + distCell + '</td>' +
           '<td class="' + turnClass + '">' + turnStr + '</td>' +
           '<td>' + revCell + '</td>' +
           '<td style="white-space:nowrap">' +
@@ -1548,6 +1558,56 @@ function updateSidebar(rows) {
         else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
       });
       inp.addEventListener('blur',    commit);
+      inp.addEventListener('click',    ev => ev.stopPropagation());
+      inp.addEventListener('dblclick', ev => ev.stopPropagation());
+    });
+  });
+  tbody.querySelectorAll('.dist-value').forEach(span => {
+    span.addEventListener('click', e => {
+      e.stopPropagation();
+      const wi   = parseInt(span.dataset.wi);
+      const wp   = waypoints[wi];
+      const prev = wi === 0
+        ? (startPose || null)
+        : resolveWpPos(waypoints[wi - 1]);
+      if (!prev || !wp) { render(); return; }
+      const cur       = resolveWpPos(wp);
+      const curDistPx = Math.hypot(cur.x - prev.x, cur.y - prev.y);
+      if (curDistPx < 1e-6) { render(); return; }
+      const inp = document.createElement('input');
+      inp.type      = 'number';
+      inp.className = 'dist-input';
+      inp.value     = pxToReal(curDistPx).toFixed(1);
+      inp.step      = '0.1';
+      inp.min       = '0';
+      span.replaceWith(inp);
+      inp.focus();
+      inp.select();
+
+      let committed = false;
+      const commit = () => {
+        if (committed) return;
+        committed = true;
+        const newDistReal = parseFloat(inp.value);
+        if (!isFinite(newDistReal) || newDistReal < 0) { render(); return; }
+        const newDistPx = newDistReal * pxPerUnit();
+        const ux = (cur.x - prev.x) / curDistPx;
+        const uy = (cur.y - prev.y) / curDistPx;
+        wp.x = prev.x + ux * newDistPx;
+        wp.y = prev.y + uy * newDistPx;
+        render();
+      };
+      const cancel = () => {
+        if (committed) return;
+        committed = true;
+        render();
+      };
+
+      inp.addEventListener('keydown', ev => {
+        if (ev.key === 'Enter')       { ev.preventDefault(); commit(); }
+        else if (ev.key === 'Escape') { ev.preventDefault(); cancel(); }
+      });
+      inp.addEventListener('blur',     commit);
       inp.addEventListener('click',    ev => ev.stopPropagation());
       inp.addEventListener('dblclick', ev => ev.stopPropagation());
     });
